@@ -4,6 +4,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: order-service-w08e1 # Deployment name matches
+  namespace: app
   labels:
     app: order-service
 spec:
@@ -16,40 +17,43 @@ spec:
       labels:
         app: order-service
     spec:
+      imagePullSecrets:
+        - name: acr-pull-secret
       containers:
-      - name: order-service-container
-        image: durgeshsamariya.azurecr.io/order_service:latest
-        imagePullPolicy: Always
-        ports:
-        - containerPort: 8000
-        env:
-        - name: POSTGRES_HOST
-          value: order-db-service-w08e1
-        - name: POSTGRES_DB
-          valueFrom:
-            configMapKeyRef:
-              name: ecomm-config-w08e1
-              key: ORDERS_DB_NAME
-        - name: POSTGRES_USER
-          valueFrom:
-            secretKeyRef:
-              name: ecomm-secrets-w08e1
-              key: POSTGRES_USER
-        - name: POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: ecomm-secrets-w08e1
-              key: POSTGRES_PASSWORD
-        - name: PRODUCT_SERVICE_URL
-          valueFrom:
-            configMapKeyRef:
-              name: ecomm-config-w08e1
-              key: PRODUCT_SERVICE_URL
+        - name: order-service-container
+          image: sit722w08acr22737.azurecr.io/order_service:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: POSTGRES_HOST
+              value: order-db-service-w08e1
+            - name: POSTGRES_DB
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config-w08e1
+                  key: ORDERS_DB_NAME
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: ecomm-secrets-w08e1
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ecomm-secrets-w08e1
+                  key: POSTGRES_PASSWORD
+            - name: PRODUCT_SERVICE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: ecomm-config-w08e1
+                  key: PRODUCT_SERVICE_URL
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: order-service-w08e1
+  namespace: app
   labels:
     app: order-service
 spec:
