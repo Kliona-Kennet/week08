@@ -1,4 +1,4 @@
-# week08/.github/workflows/backend_cd.yml
+# week08/.github/workflows/backend-cd.yml
 name: CD - Deploy Backend Services to AKS
 
 on:
@@ -13,7 +13,7 @@ on:
         required: true
         default: 'kk-wk08-rg'
       aks_acr_name:
-        description: 'Name of ACR (unused if we skip attach)'
+        description: 'Name of ACR (kept for reference; not used to attach)'
         required: true
         default: 'kkwk08acr31758'
 
@@ -43,35 +43,44 @@ jobs:
             --overwrite-existing
           kubectl get nodes
 
-      # ATTACH ACR REMOVED to avoid role-assignment failure
+      # ATTACH ACR intentionally removed (role assignment requires Owner)
 
-      - name: Deploy Backend Infrastructure (Namespace, ConfigMaps, Secrets, Databases)
+      - name: Ensure 'app' namespace exists
         run: |
-          echo "Deploying backend infrastructure..."
+          kubectl create namespace app --dry-run=client -o yaml | kubectl apply -f -
+          kubectl get ns app
+
+      - name: Deploy Backend Infrastructure (ConfigMaps, Secrets, Databases) to 'app'
+        run: |
+          echo "Deploying backend infrastructure to namespace 'app'..."
           cd k8s/
-          kubectl apply -f configmaps.yaml
-          kubectl apply -f secrets.yaml
-          kubectl apply -f product-db.yaml
-          kubectl apply -f order-db.yaml
-          kubectl get pods -A
+          kubectl apply -f configmaps.yaml -n app
+          kubectl apply -f secrets.yaml   -n app
+          kubectl apply -f product-db.yaml -n app
+          kubectl apply -f order-db.yaml   -n app
+          kubectl get pods -n app
 
-      - name: Deploy Backend Microservices (Product, Order)
+      - name: Deploy Backend Microservices (Product, Order) to 'app'
         run: |
-          echo "Deploying backend microservices..."
+          echo "Deploying backend microservices to namespace 'app'..."
           cd k8s/
-          kubectl apply -f product-service.yaml
-          kubectl apply -f order-service.yaml
-          kubectl get svc -A
+          kubectl apply -f product-service.yaml -n app
+          kubectl apply -f order-service.yaml   -n app
+          kubectl get svc -n app
 
-      - name: Wait for Backend LoadBalancer IPs
+      - name: Wait for Backend LoadBalancer IPs (namespace 'app')
+        env:
+          # 🔁 CHANGE HERE if your Service names differ
+          PRODUCT_SVC: product-service-w08e1
+          ORDER_SVC:   order-service-w08e1
         run: |
-          echo "Waiting for Product and Order LoadBalancer IPs (up to 5 minutes)..."
+          echo "Waiting for LoadBalancer IPs in namespace 'app' (up to 5 minutes)..."
           PRODUCT_IP=""
           ORDER_IP=""
           for i in $(seq 1 60); do
             echo "Attempt $i/60..."
-            PRODUCT_IP=$(kubectl get service product-service-w08e1 -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true)
-            ORDER_IP=$(kubectl get service order-service-w08e1 -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || true)
+            PRODUCT_IP=$(kubectl get svc "$PRODUCT_SVC" -n app -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+            ORDER_IP=$(kubectl get svc "$ORDER_SVC"   -n app -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
             if [[ -n "$PRODUCT_IP" && -n "$ORDER_IP" ]]; then
               echo "Product IP: $PRODUCT_IP"
               echo "Order IP:   $ORDER_IP"
@@ -79,14 +88,16 @@ jobs:
             fi
             sleep 5
           done
+
           if [[ -z "$PRODUCT_IP" || -z "$ORDER_IP" ]]; then
             echo "Error: LoadBalancer IPs not assigned in time."
-            kubectl describe svc product-service-w08e1 || true
-            kubectl describe svc order-service-w08e1 || true
+            echo "--- describe $PRODUCT_SVC ---"; kubectl describe svc "$PRODUCT_SVC" -n app || true
+            echo "--- describe $ORDER_SVC   ---"; kubectl describe svc "$ORDER_SVC"   -n app || true
             exit 1
           fi
+
           echo "PRODUCT_IP=$PRODUCT_IP" >> $GITHUB_ENV
-          echo "ORDER_IP=$ORDER_IP" >> $GITHUB_ENV
+          echo "ORDER_IP=$ORDER_IP"     >> $GITHUB_ENV
 
       - name: Capture Product Service IP for Workflow Output
         id: get_product_ip
