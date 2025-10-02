@@ -21,13 +21,15 @@ on:
         default: 'kk-wk08-rg'
 
 env:
-  ACR_NAME: ${{ secrets.ACR_NAME }}                   # e.g., kkwk08acr31758
-  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}   # e.g., kkwk08acr31758.azurecr.io
+  # These must exist in GitHub Secrets → Actions
+  ACR_NAME: ${{ secrets.ACR_NAME }}                   # kkwk08acr31758
+  ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}   # kkwk08acr31758.azurecr.io
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}
-  # Change these only if your k8s names differ:
+
+  # K8s names we will create/update
+  FRONTEND_NAMESPACE: app
   FRONTEND_DEPLOY: frontend-w08e1
   FRONTEND_SERVICE: frontend-service-w08e1
-  FRONTEND_NAMESPACE: app
   FRONTEND_REPO: frontend
 
 jobs:
@@ -43,14 +45,8 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Set subscription (paranoia check)
+      - name: Ensure correct subscription
         run: az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-
-      - name: Show ACRs visible to the runner
-        run: |
-          az acr list --query "[].{name:name,server:loginServer,rg:resourceGroup}" -o table
-          echo "Using ACR_NAME=${{ env.ACR_NAME }}"
-          echo "Using ACR_LOGIN_SERVER=${{ env.ACR_LOGIN_SERVER }}"
 
       - name: Inject backend API IPs into frontend/main.js
         run: |
@@ -59,7 +55,7 @@ jobs:
           echo "Injecting PRODUCT_API=$PROD  ORDER_API=$ORD"
           sed -i "s|_PRODUCT_API_URL_|${PROD}/api|g" frontend/main.js
           sed -i "s|_ORDER_API_URL_|${ORD}/api|g"   frontend/main.js
-          grep -E "PRODUCT_API_BASE_URL|ORDER_API_BASE_URL" -n frontend/main.js || true
+          grep -nE "PRODUCT_API_BASE_URL|ORDER_API_BASE_URL" frontend/main.js || true
 
       - name: Login to Azure Container Registry
         run: az acr login --name "${{ env.ACR_NAME }}"
@@ -84,26 +80,56 @@ jobs:
           kubectl create namespace "${{ env.FRONTEND_NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
           kubectl get ns "${{ env.FRONTEND_NAMESPACE }}"
 
-      - name: Apply frontend manifests
+      # 🔧 Create/Update the frontend Deployment and Service (idempotent)
+      - name: Apply frontend Deployment and Service
         run: |
-          cd k8s/
-          # If you have a dedicated frontend manifest file, apply it here:
-          # kubectl apply -f frontend.yaml -n "${{ env.FRONTEND_NAMESPACE }}"
-          # Otherwise ensure deploy/svc already exist then patch the image:
-          kubectl get deploy ${{ env.FRONTEND_DEPLOY }} -n "${{ env.FRONTEND_NAMESPACE }}" || true
-          kubectl get svc    ${{ env.FRONTEND_SERVICE }} -n "${{ env.FRONTEND_NAMESPACE }}" || true
-
-      - name: Set frontend image to the one we pushed
-        run: |
-          # Discover container name in the deployment
-          CNAME=$(kubectl -n "${{ env.FRONTEND_NAMESPACE }}" get deploy "${{ env.FRONTEND_DEPLOY }}" -o jsonpath='{.spec.template.spec.containers[0].name}')
-          echo "Container name: $CNAME"
-          kubectl -n "${{ env.FRONTEND_NAMESPACE }}" set image deploy/${{ env.FRONTEND_DEPLOY }} \
-            $CNAME=${{ env.ACR_LOGIN_SERVER }}/${{ env.FRONTEND_REPO }}:latest
+          cat <<'YAML' | kubectl apply -f -
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: ${FRONTEND_DEPLOY}
+            namespace: ${FRONTEND_NAMESPACE}
+            labels:
+              app: frontend
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: frontend
+            template:
+              metadata:
+                labels:
+                  app: frontend
+              spec:
+                containers:
+                  - name: frontend
+                    image: ${ACR_LOGIN_SERVER}/${FRONTEND_REPO}:latest
+                    ports:
+                      - containerPort: 80
+                    # If your container serves on a different port, change containerPort
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: ${FRONTEND_SERVICE}
+            namespace: ${FRONTEND_NAMESPACE}
+            labels:
+              app: frontend
+          spec:
+            type: LoadBalancer
+            selector:
+              app: frontend
+            ports:
+              - name: http
+                port: 80
+                targetPort: 80
+          YAML
+          kubectl -n "${{ env.FRONTEND_NAMESPACE }}" get deploy "${{ env.FRONTEND_DEPLOY }}"
+          kubectl -n "${{ env.FRONTEND_NAMESPACE }}" get svc    "${{ env.FRONTEND_SERVICE }}"
 
       - name: Wait for rollout
         run: |
-          kubectl -n "${{ env.FRONTEND_NAMESPACE }}" rollout status deploy/${{ env.FRONTEND_DEPLOY }}
+          kubectl -n "${{ env.FRONTEND_NAMESPACE }}" rollout status deploy/${{ env.FRONTEND_DEPLOY }} --timeout=180s
 
       - name: Wait for frontend EXTERNAL-IP
         run: |
