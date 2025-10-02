@@ -199,3 +199,8 @@ cython_debug/
 azure-credentials.json
 acr-creds.json
 
+
+# Never commit secrets
+azure-credentials
+azure-credentials.json
+acr-creds.json
