@@ -21,12 +21,10 @@ on:
         default: 'kk-wk08-rg'
 
 env:
-  # These must exist in GitHub Secrets → Actions
   ACR_NAME: ${{ secrets.ACR_NAME }}                   # kkwk08acr31758
   ACR_LOGIN_SERVER: ${{ secrets.ACR_LOGIN_SERVER }}   # kkwk08acr31758.azurecr.io
   IMAGE_TAG: ${{ github.sha }}-${{ github.run_id }}
 
-  # K8s names we will create/update
   FRONTEND_NAMESPACE: app
   FRONTEND_DEPLOY: frontend-w08e1
   FRONTEND_SERVICE: frontend-service-w08e1
@@ -80,15 +78,14 @@ jobs:
           kubectl create namespace "${{ env.FRONTEND_NAMESPACE }}" --dry-run=client -o yaml | kubectl apply -f -
           kubectl get ns "${{ env.FRONTEND_NAMESPACE }}"
 
-      # 🔧 Create/Update the frontend Deployment and Service (idempotent)
+      # Create/Update the frontend Deployment and Service (variables now EXPAND)
       - name: Apply frontend Deployment and Service
         run: |
-          cat <<'YAML' | kubectl apply -f -
+          cat <<EOF | kubectl apply -n "${{ env.FRONTEND_NAMESPACE }}" -f -
           apiVersion: apps/v1
           kind: Deployment
           metadata:
             name: ${FRONTEND_DEPLOY}
-            namespace: ${FRONTEND_NAMESPACE}
             labels:
               app: frontend
           spec:
@@ -106,13 +103,11 @@ jobs:
                     image: ${ACR_LOGIN_SERVER}/${FRONTEND_REPO}:latest
                     ports:
                       - containerPort: 80
-                    # If your container serves on a different port, change containerPort
           ---
           apiVersion: v1
           kind: Service
           metadata:
             name: ${FRONTEND_SERVICE}
-            namespace: ${FRONTEND_NAMESPACE}
             labels:
               app: frontend
           spec:
@@ -123,7 +118,7 @@ jobs:
               - name: http
                 port: 80
                 targetPort: 80
-          YAML
+          EOF
           kubectl -n "${{ env.FRONTEND_NAMESPACE }}" get deploy "${{ env.FRONTEND_DEPLOY }}"
           kubectl -n "${{ env.FRONTEND_NAMESPACE }}" get svc    "${{ env.FRONTEND_SERVICE }}"
 
